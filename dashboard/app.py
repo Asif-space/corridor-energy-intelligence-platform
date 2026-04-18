@@ -157,10 +157,25 @@ def load_eia():
 
 @st.cache_data(ttl=3600)
 def load_scenarios():
+    # Try local first (development)
     path = Config.DATA_DIR / "scenario_journal.json"
     if path.exists():
         with open(path) as f:
             return json.load(f)
+
+    # Fall back to GitHub (cloud deployment)
+    try:
+        url = (
+            "https://raw.githubusercontent.com/"
+            "Asif-space/corridor-energy-intelligence-platform/"
+            "main/data/scenario_journal.json"
+        )
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+
     return None
 
 
