@@ -1,5 +1,9 @@
 import sys
+import os
 import json
+import time
+import requests
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from pathlib import Path
@@ -7,6 +11,14 @@ from datetime import datetime
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Load secrets from Streamlit Cloud if available
+if hasattr(st, "secrets"):
+    for key in ["EIA_API_KEY", "FRED_API_KEY",
+                "ALPHA_VANTAGE_API_KEY", "RESEARCHER_NAME"]:
+        if key in st.secrets:
+            os.environ[key] = st.secrets[key]
+
 from config.settings import Config
 
 st.set_page_config(
@@ -18,15 +30,9 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-[data-testid="stAppViewContainer"] {
-    background-color: #0a0a0a;
-}
-[data-testid="stSidebar"] {
-    background-color: #111111;
-}
-h1, h2, h3 {
-    color: #c8a96e;
-}
+[data-testid="stAppViewContainer"] { background-color: #0a0a0a; }
+[data-testid="stSidebar"]          { background-color: #111111; }
+h1, h2, h3                         { color: #c8a96e; }
 [data-testid="stMetric"] {
     background-color: #111111;
     border-radius: 8px;
@@ -35,75 +41,6 @@ h1, h2, h3 {
 }
 </style>
 """, unsafe_allow_html=True)
-
-
-# ── Sidebar ──────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## ⚡ GEIP")
-    st.markdown("*Gulf Energy Intelligence Platform*")
-    st.divider()
-    st.markdown("**Corridor:** South Asia · Gulf · Africa")
-    st.markdown(f"**Updated:** {datetime.now().strftime('%Y-%m-%d')}")
-    st.divider()
-    st.markdown("**Newsletter**")
-    st.markdown("[The Corridor Brief](https://thecorridorbrief.substack.com)")
-    st.markdown("**Twitter**")
-    st.markdown("[@quantbyasif](https://twitter.com/quantbyasif)")
-    st.markdown("**GitHub**")
-    st.markdown("[Asif-space](https://github.com/Asif-space)")
-
-
-# ── Header ───────────────────────────────────────────────────────
-st.markdown("""
-<div style='background:linear-gradient(135deg,#0a0a0a,#1a1200);
-padding:20px;border-left:4px solid #c8a96e;margin-bottom:20px;
-border-radius:4px;'>
-<h1 style='margin:0;color:#c8a96e;'>
-⚡ Gulf Energy Intelligence Platform</h1>
-<p style='color:#888;margin:6px 0 0 0;'>
-Physical commodity market analytics · South Asia · Gulf · Africa
-</p>
-</div>
-""", unsafe_allow_html=True)
-
-
-# ── Load Data ────────────────────────────────────────────────────
-@st.cache_data(ttl=3600)
-def load_eia():
-    eia_dir = Config.EIA_RAW
-    if not eia_dir.exists():
-        return {}, None
-    folders = sorted([f for f in eia_dir.iterdir() if f.is_dir()])
-    if not folders:
-        return {}, None
-    latest = folders[-1]
-    data = {}
-    for csv_file in latest.glob("*.csv"):
-        try:
-            df = pd.read_csv(csv_file, index_col=0, parse_dates=True)
-            df = df.sort_index()
-            data[csv_file.stem] = df
-        except Exception:
-            pass
-    summary = None
-    sp = Config.EIA_RAW / "latest_summary.json"
-    if sp.exists():
-        with open(sp) as f:
-            summary = json.load(f)
-    return data, summary
-
-
-@st.cache_data(ttl=3600)
-def load_scenarios():
-    path = Config.DATA_DIR / "scenario_journal.json"
-    if path.exists():
-        with open(path) as f:
-            return json.load(f)
-    return None
-
-
-data, summary = load_eia()
-scenarios = load_scenarios()
 
 GOLD  = "#c8a96e"
 BLUE  = "#4a90d9"
@@ -122,7 +59,118 @@ LAYOUT = dict(
 )
 
 
-# ── Tabs ─────────────────────────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("## ⚡ GEIP")
+    st.markdown("*Gulf Energy Intelligence Platform*")
+    st.divider()
+    st.markdown("**Corridor:** South Asia · Gulf · Africa")
+    st.markdown(f"**Updated:** {datetime.now().strftime('%Y-%m-%d')}")
+    st.divider()
+    st.markdown("**Newsletter**")
+    st.markdown("[The Corridor Brief](https://thecorridorbrief.substack.com)")
+    st.markdown("**Twitter**")
+    st.markdown("[@quantbyasif](https://twitter.com/quantbyasif)")
+    st.markdown("**GitHub**")
+    st.markdown("[Asif-space](https://github.com/Asif-space)")
+
+
+# ── Header ────────────────────────────────────────────────────────
+st.markdown("""
+<div style='background:linear-gradient(135deg,#0a0a0a,#1a1200);
+padding:20px;border-left:4px solid #c8a96e;margin-bottom:20px;
+border-radius:4px;'>
+<h1 style='margin:0;color:#c8a96e;'>
+⚡ Gulf Energy Intelligence Platform</h1>
+<p style='color:#888;margin:6px 0 0 0;'>
+Physical commodity market analytics · South Asia · Gulf · Africa
+</p>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ── Data Loading ──────────────────────────────────────────────────
+@st.cache_data(ttl=3600)
+def load_eia():
+    api_key = os.environ.get("EIA_API_KEY") or Config.EIA_API_KEY
+    if not api_key or api_key == "paste_your_key_here":
+        return {}, None
+
+    series_map = {
+        "crude_stocks_total":    "PET.WCRSTUS1.W",
+        "crude_production_us":   "PET.WCRFPUS2.W",
+        "crude_imports":         "PET.WCRIMUS2.W",
+        "crude_exports":         "PET.WCREXUS2.W",
+        "refinery_utilisation":  "PET.WPULEUS3.W",
+        "gasoline_stocks_total": "PET.WGTSTUS1.W",
+        "distillate_stocks":     "PET.WDISTUS1.W",
+        "jet_fuel_stocks":       "PET.WKJSTUS1.W",
+        "wti_spot":              "PET.RWTC.D",
+        "brent_spot":            "PET.RBRTE.D",
+    }
+
+    data = {}
+    for name, series_id in series_map.items():
+        try:
+            url = f"https://api.eia.gov/v2/seriesid/{series_id}"
+            params = {
+                "api_key": api_key,
+                "start":   "2019-01-01",
+                "length":  5000
+            }
+            r       = requests.get(url, params=params, timeout=30)
+            records = r.json().get("response", {}).get("data", [])
+            if records:
+                df          = pd.DataFrame(records)
+                df["period"] = pd.to_datetime(df["period"], errors="coerce")
+                df          = df.dropna(subset=["period"])
+                df          = df.set_index("period").sort_index()
+                val_col     = [c for c in df.columns if "value" in c.lower()]
+                if not val_col:
+                    val_col = [df.columns[0]]
+                df          = df[[val_col[0]]].copy()
+                df.columns  = [name]
+                df[name]    = pd.to_numeric(df[name], errors="coerce")
+                data[name]  = df
+            time.sleep(0.2)
+        except Exception:
+            pass
+
+    # Build summary
+    summary = {
+        "date":    datetime.now().strftime("%Y-%m-%d"),
+        "metrics": {}
+    }
+    for key in ["crude_stocks_total", "refinery_utilisation",
+                "crude_production_us", "gasoline_stocks_total"]:
+        if key in data and not data[key].empty:
+            latest = float(data[key].iloc[-1, 0])
+            prev   = float(data[key].iloc[-2, 0]) if len(data[key]) > 1 else latest
+            summary["metrics"][key] = {
+                "label":  key,
+                "latest": latest,
+                "change": latest - prev
+            }
+
+    return data, summary
+
+
+@st.cache_data(ttl=3600)
+def load_scenarios():
+    path = Config.DATA_DIR / "scenario_journal.json"
+    if path.exists():
+        with open(path) as f:
+            return json.load(f)
+    return None
+
+
+# ── Load ──────────────────────────────────────────────────────────
+with st.spinner("Fetching live EIA data..."):
+    data, summary = load_eia()
+
+scenarios = load_scenarios()
+
+# ── Tabs ──────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Weekly Petroleum",
     "📈 Price Analysis",
@@ -138,25 +186,23 @@ with tab1:
     st.subheader("EIA Weekly Petroleum Status Report")
 
     if not data:
-        st.warning("No EIA data found. Run the pipeline first:\n"
-                   "```\npython scripts/data_ingestion/eia_pipeline.py\n```")
+        st.error("Could not fetch EIA data. Check API key in secrets.")
         st.stop()
 
     # KPI row
     if summary and summary.get("metrics"):
         c1, c2, c3, c4 = st.columns(4)
         kpis = [
-            ("crude_stocks_total",   "Crude Stocks",   "Mb",  c1),
-            ("refinery_utilisation", "Refinery Util",  "%",   c2),
-            ("crude_production_us",  "US Production",  "Mbd", c3),
-            ("gasoline_stocks_total","Gasoline Stocks", "Mb", c4),
+            ("crude_stocks_total",    "Crude Stocks",    "Mb",  c1),
+            ("refinery_utilisation",  "Refinery Util",   "%",   c2),
+            ("crude_production_us",   "US Production",   "Mbd", c3),
+            ("gasoline_stocks_total", "Gasoline Stocks", "Mb",  c4),
         ]
         for key, label, unit, col in kpis:
             m = summary["metrics"].get(key)
             if m:
                 val    = m["latest"]
                 change = m.get("change", 0)
-                # Convert kb to Mb for stock figures
                 if unit == "Mb":
                     val    = val / 1000
                     change = change / 1000
@@ -168,18 +214,16 @@ with tab1:
 
     st.divider()
 
-    # Crude inventory chart
+    # Crude inventory vs 5yr chart
     if "crude_stocks_total" in data:
         st.markdown("**US Crude Oil Inventories vs 5-Year Seasonal Average**")
 
-        import numpy as np
-        series = data["crude_stocks_total"].iloc[:, 0].dropna() / 1000
+        series  = data["crude_stocks_total"].iloc[:, 0].dropna() / 1000
+        cutoff  = pd.Timestamp("2021-01-01")
+        hist    = series[series.index < cutoff]
+        recent  = series[series.index >= pd.Timestamp("2022-01-01")]
 
-        cutoff = pd.Timestamp("2021-01-01")
-        hist   = series[series.index < cutoff]
-        recent = series[series.index >= pd.Timestamp("2022-01-01")]
-
-        hist_df        = hist.to_frame("val")
+        hist_df         = hist.to_frame("val")
         hist_df["week"] = hist_df.index.isocalendar().week.astype(int)
         avg             = hist_df.groupby("week")["val"].mean()
         std             = hist_df.groupby("week")["val"].std()
@@ -229,19 +273,17 @@ with tab1:
             font=dict(color=GREEN if diff > 0 else RED, size=11),
             ax=-100, ay=-40
         )
-
         fig.update_layout(**LAYOUT, height=420,
                           yaxis_title="Million Barrels (Mb)")
         st.plotly_chart(fig, use_container_width=True)
 
     # Two column charts
     col_a, col_b = st.columns(2)
-
     with col_a:
         if "gasoline_stocks_total" in data:
             st.markdown("**Gasoline Stocks**")
-            d = data["gasoline_stocks_total"].iloc[:, 0].dropna() / 1000
-            d = d.iloc[-104:]
+            d   = data["gasoline_stocks_total"].iloc[:, 0].dropna() / 1000
+            d   = d.iloc[-104:]
             fig = go.Figure(go.Scatter(
                 x=d.index, y=d.values,
                 line=dict(color=GREEN, width=1.8),
@@ -255,8 +297,8 @@ with tab1:
     with col_b:
         if "distillate_stocks" in data:
             st.markdown("**Distillate Stocks**")
-            d = data["distillate_stocks"].iloc[:, 0].dropna() / 1000
-            d = d.iloc[-104:]
+            d   = data["distillate_stocks"].iloc[:, 0].dropna() / 1000
+            d   = d.iloc[-104:]
             fig = go.Figure(go.Scatter(
                 x=d.index, y=d.values,
                 line=dict(color=RED, width=1.8),
@@ -285,7 +327,6 @@ with tab2:
         brent = data["brent_spot"].iloc[:, 0].dropna().iloc[-days:]
         wti   = data["wti_spot"].iloc[:, 0].dropna().iloc[-days:]
 
-        # Price chart
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=brent.index, y=brent.values,
@@ -298,31 +339,26 @@ with tab2:
         fig.update_layout(**LAYOUT, height=380, yaxis_title="USD/barrel")
         st.plotly_chart(fig, use_container_width=True)
 
-        # Price metrics
         m1, m2, m3 = st.columns(3)
-        b_latest = brent.iloc[-1]
-        b_prev   = brent.iloc[-2]
-        w_latest = wti.iloc[-1]
+        b_latest = float(brent.iloc[-1])
+        b_prev   = float(brent.iloc[-2])
+        w_latest = float(wti.iloc[-1])
         spread   = b_latest - w_latest
-        m1.metric("Brent", f"${b_latest:.2f}",
-                  f"{b_latest-b_prev:+.2f}")
+        m1.metric("Brent", f"${b_latest:.2f}", f"{b_latest-b_prev:+.2f}")
         m2.metric("WTI",   f"${w_latest:.2f}")
         m3.metric("Brent–WTI Spread", f"${spread:.2f}")
 
         st.divider()
-
-        # Spread chart
         st.markdown("**Brent–WTI Spread (USD/bbl)**")
+
         combined = brent.to_frame("brent").join(
             wti.to_frame("wti"), how="inner")
         spread_s = combined["brent"] - combined["wti"]
         colors   = [GREEN if v >= 0 else RED for v in spread_s.values]
 
         fig2 = go.Figure(go.Bar(
-            x=spread_s.index,
-            y=spread_s.values,
-            marker_color=colors,
-            name="Spread"
+            x=spread_s.index, y=spread_s.values,
+            marker_color=colors
         ))
         fig2.add_hline(
             y=float(spread_s.mean()),
@@ -334,7 +370,7 @@ with tab2:
         st.plotly_chart(fig2, use_container_width=True)
 
     else:
-        st.info("Price data not available. Run the EIA pipeline.")
+        st.info("Price data not available. Check API key.")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -342,22 +378,20 @@ with tab2:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with tab3:
     st.subheader("Commodity Scenario Framework")
-    st.caption("Updated every Sunday. Run: python scripts/scenario_journal.py")
+    st.caption("Updated every Sunday via: python scripts/scenario_journal.py")
 
     if not scenarios:
-        st.info("No scenarios found. Run:\n"
-                "```\npython scripts/scenario_journal.py\n```")
+        st.info("No scenarios found locally. Run the scenario journal.")
     else:
         ICONS = {"Bull": "🟢", "Base": "🟡", "Bear": "🔴", "Tail": "🟣"}
-
         for key, commodity in scenarios.items():
             st.markdown(f"#### {commodity['commodity']}")
-            st.caption(f"*{commodity['current_view']}*  |  "
-                       f"Last updated: {commodity.get('last_updated') or 'Never'}")
-
+            st.caption(
+                f"*{commodity['current_view']}*  |  "
+                f"Last updated: {commodity.get('last_updated') or 'Never'}"
+            )
             scens = commodity.get("scenarios", {})
             cols  = st.columns(len(scens))
-
             for col, (name, s) in zip(cols, scens.items()):
                 lo, hi = s["range"]
                 prob   = s["prob"] * 100
@@ -368,7 +402,6 @@ with tab3:
                     delta=f"${lo}–${hi}"
                 )
                 col.caption(s["label"])
-
             st.divider()
 
 
@@ -391,23 +424,21 @@ integrated form.
 """, unsafe_allow_html=True)
 
     f1, f2 = st.columns(2)
-
     with f1:
         st.markdown("#### 🛢 India's Russian Pivot")
         st.markdown("""
 India has shifted **~35–40% of crude imports** to Russian supply,
 permanently displacing Gulf barrels from their most important Asian
-market. Saudi, Iraqi, and UAE producers are now competing aggressively
+market. Saudi, Iraqi, and UAE producers now compete aggressively
 for African, European, and remaining Asian offtake.
         """)
         st.markdown("#### 💱 South Asian LNG Dependency")
         st.markdown("""
 Bangladesh and Pakistan face structural LNG import vulnerability.
 Foreign exchange shortages constrain their ability to clear
-international spot cargos — creating demand that Gulf and East African
-LNG suppliers must finance creatively to capture.
+international spot cargos — creating demand that Gulf and East
+African LNG suppliers must finance creatively to capture.
         """)
-
     with f2:
         st.markdown("#### 🌍 East Africa's LNG Moment")
         st.markdown("""
