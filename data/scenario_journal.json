@@ -1,0 +1,106 @@
+{
+  "Brent_Crude": {
+    "commodity": "Brent Crude Oil",
+    "unit": "USD/bbl",
+    "last_updated": "2026-04-18",
+    "current_view": "Base case holds. OPEC+ compliance and Fed path are the swing factors.",
+    "scenarios": {
+      "Bull": {
+        "range": [
+          90,
+          110
+        ],
+        "prob": 0.2,
+        "label": "Supply disruption / OPEC+ surprise cut",
+        "trigger": "Hormuz escalation or deeper-than-expected OPEC+ cut"
+      },
+      "Base": {
+        "range": [
+          70,
+          88
+        ],
+        "prob": 0.5,
+        "label": "Managed balance \u2014 OPEC+ extensions hold",
+        "trigger": "OPEC+ maintains cuts, demand grows at IEA baseline"
+      },
+      "Bear": {
+        "range": [
+          55,
+          70
+        ],
+        "prob": 0.25,
+        "label": "Demand miss + OPEC fracture",
+        "trigger": "Global slowdown or Saudi market share defence"
+      },
+      "Tail": {
+        "range": [
+          35,
+          55
+        ],
+        "prob": 0.05,
+        "label": "Full OPEC collapse / global recession",
+        "trigger": "Simultaneous quota abandonment and financial crisis"
+      }
+    },
+    "history": [
+      {
+        "date": "2026-04-18",
+        "probs": {
+          "Bull": 0.2,
+          "Base": 0.5,
+          "Bear": 0.25,
+          "Tail": 0.05
+        },
+        "view": "Base case holds. OPEC+ compliance and Fed path are the swing factors.",
+        "reason": ""
+      }
+    ]
+  },
+  "JKM_LNG": {
+    "commodity": "JKM LNG \u2014 Asia Benchmark",
+    "unit": "USD/MMBtu",
+    "last_updated": "2026-04-18",
+    "current_view": "South Asian demand constrained by FX. Corridor freight economics are the key variable.",
+    "scenarios": {
+      "Bull": {
+        "range": [
+          15,
+          22
+        ],
+        "prob": 0.25,
+        "label": "Cold snap + East African supply delay",
+        "trigger": "Weather event + Mozambique LNG restart delayed further"
+      },
+      "Base": {
+        "range": [
+          10,
+          15
+        ],
+        "prob": 0.55,
+        "label": "Moderate demand, adequate supply",
+        "trigger": "Qatar contracts hold, Australian LNG stable"
+      },
+      "Bear": {
+        "range": [
+          6,
+          10
+        ],
+        "prob": 0.2,
+        "label": "Mild weather + oversupply",
+        "trigger": "Warm Asian winter, US LNG export surge"
+      }
+    },
+    "history": [
+      {
+        "date": "2026-04-18",
+        "probs": {
+          "Bull": 0.25,
+          "Base": 0.55,
+          "Bear": 0.2
+        },
+        "view": "South Asian demand constrained by FX. Corridor freight economics are the key variable.",
+        "reason": ""
+      }
+    ]
+  }
+}
